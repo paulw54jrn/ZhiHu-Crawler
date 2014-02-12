@@ -1,12 +1,16 @@
 #! /usr/bin/python
 # -*- coding: utf-8 -*-
 from lxml import etree
-import requests, re, sys, Queue, threading, time, os
+from bs4  import BeautifulSoup
+
+import requests, re, sys, Queue, threading, time, os, random
 
 NB_WORKER_THREAD = 5
 BASE_DOMAIN      = 'http://www.zhihu.com'
 SILENT_OUTPUT    = False
 BASE_FOLDER      = 'Answer/'
+MAX_CONN_RETRY   = 3
+CONN_TIMEOUT     = 10
 
 def answerPageScanner( loginSession, userAnswerURL, answerPageQueue):
     response     = loginSession.get(userAnswerURL)
@@ -40,7 +44,24 @@ def questionLinkExtractor( answerPageQueue, questionLinkQueue):
             print str(len(questionLinks)) + " link(s) Extracted..." 
         answerPageQueue.task_done()
 
-def answerContentExtractor( loginSession, questionLinkQueue , answerContentList) :
+def imgLinkExtractorModifier( answerResult, imageProcessQueue):
+    answerID= answerResult['answerID']
+    html    = BeautifulSoup(answerResult['answerContent'])
+    img     = html.find_all(re.compile('img'))
+    
+    for lnk in img:
+        if lnk.get('data-actualsrc') != None:
+            imageProcessQueue.put( {'answerID':answerID,'imageLink':lnk['data-actualsrc'],'nbTimeout':0})
+            linkPath = str(lnk['data-actualsrc']).split('/')
+            fileName = linkPath[len(linkPath)-1]
+            lnk['src'] = answerID + "/" + fileName
+        else:
+            lnk.decompose()
+            
+    answerResult['answerContent'] = str(html).decode('utf-8')
+    return answerResult
+    
+def answerContentExtractor( loginSession, questionLinkQueue , answerContentList, imageProcessQueue) :
     while True:
         global BASE_DOMAIN
         answerContentPageURL = questionLinkQueue.get()
@@ -71,7 +92,7 @@ def answerContentExtractor( loginSession, questionLinkQueue , answerContentList)
             lastEdit = re.findall('<span class="time">(.*)</span>',raw_data)[0]
         except IndexError:
             lastEdit = ""
-            
+        
         result = {
                   'questionID'    : questionID,
                   'answerID'      : answerID,
@@ -81,6 +102,9 @@ def answerContentExtractor( loginSession, questionLinkQueue , answerContentList)
                   'voteCount'     : voteCount,
                   'lastEdit'      : lastEdit
                 }
+                
+        result = imgLinkExtractorModifier(result, imageProcessQueue)
+        
         if not SILENT_OUTPUT:
             print 'Answer ('+str(answerID)+') Extracted...' 
         answerContentList.append(result)
@@ -127,13 +151,13 @@ def getUserInfo( loginSession, userPageURL) :
 def writeUserInfo( node, userInfo ) :
     for key in userInfo:
         textNode      = etree.SubElement(node,key)
-        textNode.text = userInfo[key]
+        textNode.text = etree.CDATA(userInfo[key])
 
 
 def writeUserAnswer( node, userAnswer) :
     for key in userAnswer:
         textNode      = etree.SubElement(node,key)
-        textNode.text = userAnswer[key]
+        textNode.text = etree.CDATA(userAnswer[key])
         
         
 def writeUserAnswerList( node, userAnswerList ) :
@@ -153,6 +177,7 @@ def writeToXML( XMLPath, userInfo, completeAnswerList):
     with open(XMLPath,'w') as f:
         f.write( etree.tostring(root, encoding = 'UTF-8' ,pretty_print = True ))
 
+
 def writeFile( result ):
     userInfo   = result['userInfo']
     userAnswer = result['userAnswer']
@@ -164,6 +189,53 @@ def writeFile( result ):
  
     writeToXML(BASE_FOLDER+userName+"/"+userName+".xml", userInfo, userAnswer)
 
+def imageDownloader( userName, imageProcessQueue ):
+    while True:
+        imgSet    = imageProcessQueue.get()
+        answerID  = imgSet['answerID']
+        imageLink = imgSet['imageLink']
+        nbTimeout = imgSet['nbTimeout']
+        
+        print "Starting to download file "+ imageLink
+        
+        global MAX_CONN_RETRY
+        if nbTimeout > MAX_CONN_RETRY : 
+            print >> sys.stderr ,"Max retry reached... aborting..." 
+            imageProcessQueue.task_done()
+            return
+        
+        imgPath   = BASE_FOLDER+userName+"/"+answerID+"/image/"
+        fileName = str(imageLink).split('/')
+        fileName  = fileName[len(fileName)-1]
+        if not os.path.exists( imgPath ):
+            waitTime = random.randint(0,10)
+            time.sleep(waitTime)
+            if not os.path.exists( imgPath ):
+                os.makedirs( imgPath )
+        
+        global CONN_TIMEOUT
+        try:
+            r = requests.get( imageLink , stream=True, timeout=CONN_TIMEOUT)
+            if r.status_code == 200 :
+                with open( imgPath + fileName,'wb+')as f:
+                    for chunk in r.iter_content(): 
+                        f.write(chunk)
+            else:
+                print >> sys.stderr , "Image " + fileName + " download Error..." 
+            
+            if not SILENT_OUTPUT:
+                print "Image "+ fileName + " Download Completed..."
+        except requests.exceptions.Timeout:
+            print "Request for "+fileName+" timed out... Retrying..."
+            imgSet['nbTimeout'] += 1
+            imageProcessQueue.put(imgSet)
+#        else:
+#            print >> sys.stderr , "Exception..." 
+#            imageProcessQueue.task_done()
+#            return
+            
+        imageProcessQueue.task_done()
+
 def extractUserAnswer( loginSession, userName, silent = False):
     global SILENT_OUTPUT
     SILENT_OUTPUT = silent
@@ -174,6 +246,7 @@ def extractUserAnswer( loginSession, userName, silent = False):
 
     answerPageQueue    = Queue.Queue()
     questionLinkQueue  = Queue.Queue()
+    imageProcessQueue  = Queue.Queue()
     answerContentList  = []
     
     answerPageScannerThread = threading.Thread(target = answerPageScanner,args=(s,baseURL,answerPageQueue))
@@ -186,13 +259,20 @@ def extractUserAnswer( loginSession, userName, silent = False):
     
     global NB_WORKER_THREAD
     for i in range(NB_WORKER_THREAD) :
-        answerContentExtractorThread = threading.Thread(target = answerContentExtractor,args=(s,questionLinkQueue,answerContentList))
+        answerContentExtractorThread = threading.Thread(target = answerContentExtractor,args=(s,questionLinkQueue,answerContentList,imageProcessQueue))
         answerContentExtractorThread.daemon = True
-        answerContentExtractorThread.start()
+        answerContentExtractorThread.start()    
+            
+        imageDownloaderThread = threading.Thread(target = imageDownloader,args=(userName,imageProcessQueue))
+        imageDownloaderThread.daemon = True
+        imageDownloaderThread.start()
+    
     
     time.sleep(5)
     answerPageQueue.join()
     questionLinkQueue.join()
+    imageProcessQueue.join()
+    
     userInfo = getUserInfo(s, userURL)
     result = { 
                'userInfo'   : userInfo,
