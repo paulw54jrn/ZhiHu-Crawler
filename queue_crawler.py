@@ -5,13 +5,15 @@ from bs4  import BeautifulSoup
 
 import requests, re, sys, Queue, threading, time, os, random
 
-NB_WORKER_THREAD = 5
-BASE_DOMAIN      = 'http://www.zhihu.com'
-SILENT_OUTPUT    = False
-BASE_FOLDER      = 'Answer/'
-MAX_CONN_RETRY   = 3
-CONN_TIMEOUT     = 10
+NB_WORKER_THREAD = 5         #number of worker threads. 
+BASE_DOMAIN      = 'http://www.zhihu.com' 
+SILENT_OUTPUT    = False     #Do not output verbose information 
+BASE_FOLDER      = 'Answer/' #folder to contain all the files
+MAX_CONN_RETRY   = 3         #max number of re-connection before abort
+CONN_TIMEOUT     = 10        #max timeout before abort
 
+#Scan the web page, extract the URL of next page and put it
+#inside the answerPageQueue
 def answerPageScanner( loginSession, userAnswerURL, answerPageQueue):
     response     = loginSession.get(userAnswerURL)
     raw_data     = response.text
@@ -31,7 +33,9 @@ def answerPageScanner( loginSession, userAnswerURL, answerPageQueue):
             print "Answer Page "+str(page_count)+" Scanned..." 
         page_count += 1
         answerPageQueue.put(raw_data)
-    
+
+#Scan the page, extract all the question links , then 
+#put the URLs in the questionLinkQueue
 def questionLinkExtractor( answerPageQueue, questionLinkQueue):
     while True:
         raw_data = answerPageQueue.get()
@@ -44,6 +48,8 @@ def questionLinkExtractor( answerPageQueue, questionLinkQueue):
             print str(len(questionLinks)) + " link(s) Extracted..." 
         answerPageQueue.task_done()
 
+#Scan through the extracted html document , extract all the img 
+#tags, then change the image's src to the local file
 def imgLinkExtractorModifier( answerResult, imageProcessQueue):
     answerID= answerResult['answerID']
     html    = BeautifulSoup(answerResult['answerContent'])
@@ -63,7 +69,11 @@ def imgLinkExtractorModifier( answerResult, imageProcessQueue):
     answerResult['answerContent'] = str(html).decode('utf-8')
     answerResult['img'] = imgList
     return answerResult
-    
+
+#Scan the answer page, extract the title, id, description of the question, alone
+#with the answer content, put them into a dictionary, then push the dictionary
+#into the answerContentList. All the image links that were extracted from the 
+#answer content will be put into the imageProcessQueue
 def answerContentExtractor( loginSession, questionLinkQueue , answerContentList, imageProcessQueue) :
     while True:
         global BASE_DOMAIN
@@ -114,7 +124,7 @@ def answerContentExtractor( loginSession, questionLinkQueue , answerContentList,
         questionLinkQueue.task_done()
 
 
-
+#Access the user's profile page and extract user information.
 def getUserInfo( loginSession, userPageURL) :
     URL           = userPageURL + '/about'
     response      = loginSession.get(URL)
