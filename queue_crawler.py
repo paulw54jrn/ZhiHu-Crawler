@@ -48,17 +48,20 @@ def imgLinkExtractorModifier( answerResult, imageProcessQueue):
     answerID= answerResult['answerID']
     html    = BeautifulSoup(answerResult['answerContent'])
     img     = html.find_all(re.compile('img'))
+    imgList = []
     
     for lnk in img:
         if lnk.get('data-actualsrc') != None:
             imageProcessQueue.put( {'answerID':answerID,'imageLink':lnk['data-actualsrc'],'nbTimeout':0})
             linkPath = str(lnk['data-actualsrc']).split('/')
             fileName = linkPath[len(linkPath)-1]
+            imgList.append(fileName)
             lnk['src'] = answerID + "/" + fileName
         else:
             lnk.decompose()
             
     answerResult['answerContent'] = str(html).decode('utf-8')
+    answerResult['img'] = imgList
     return answerResult
     
 def answerContentExtractor( loginSession, questionLinkQueue , answerContentList, imageProcessQueue) :
@@ -156,8 +159,13 @@ def writeUserInfo( node, userInfo ) :
 
 def writeUserAnswer( node, userAnswer) :
     for key in userAnswer:
-        textNode      = etree.SubElement(node,key)
-        textNode.text = etree.CDATA(userAnswer[key])
+        if isinstance( userAnswer[key] , list) :
+            for i in range(len(userAnswer[key])) :
+                textNode      = etree.SubElement(node,key)
+                textNode.text = etree.CDATA(userAnswer[key][i])
+        else:
+            textNode      = etree.SubElement(node,key)
+            textNode.text = etree.CDATA(userAnswer[key])
         
         
 def writeUserAnswerList( node, userAnswerList ) :
@@ -228,7 +236,7 @@ def imageDownloader( loginSession,userName, imageProcessQueue ):
             
             if not SILENT_OUTPUT:
                 print "Image "+ fileName + " Download Completed..."
-        except timeout:
+        except requests.exceptions.Timeout:
             print "Request for "+fileName+" timed out... Retrying..."
             imgSet['nbTimeout'] += 1
             imageProcessQueue.put(imgSet)
