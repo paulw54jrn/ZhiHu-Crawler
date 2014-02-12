@@ -189,7 +189,7 @@ def writeFile( result ):
  
     writeToXML(BASE_FOLDER+userName+"/"+userName+".xml", userInfo, userAnswer)
 
-def imageDownloader( userName, imageProcessQueue ):
+def imageDownloader( loginSession,userName, imageProcessQueue ):
     while True:
         imgSet    = imageProcessQueue.get()
         answerID  = imgSet['answerID']
@@ -207,15 +207,18 @@ def imageDownloader( userName, imageProcessQueue ):
         imgPath   = BASE_FOLDER+userName+"/"+answerID+"/image/"
         fileName = str(imageLink).split('/')
         fileName  = fileName[len(fileName)-1]
-        if not os.path.exists( imgPath ):
-            waitTime = random.randint(0,10)
-            time.sleep(waitTime)
+        try:
             if not os.path.exists( imgPath ):
-                os.makedirs( imgPath )
-        
+                waitTime = random.randint(0,10)
+                time.sleep(waitTime)
+                if not os.path.exists( imgPath ):
+                    os.makedirs( imgPath )
+        except :
+            pass
+            
         global CONN_TIMEOUT
         try:
-            r = requests.get( imageLink , stream=True, timeout=CONN_TIMEOUT)
+            r = loginSession.get( imageLink , stream=True, timeout=CONN_TIMEOUT)
             if r.status_code == 200 :
                 with open( imgPath + fileName,'wb+')as f:
                     for chunk in r.iter_content(): 
@@ -225,7 +228,7 @@ def imageDownloader( userName, imageProcessQueue ):
             
             if not SILENT_OUTPUT:
                 print "Image "+ fileName + " Download Completed..."
-        except requests.exceptions.Timeout:
+        except timeout:
             print "Request for "+fileName+" timed out... Retrying..."
             imgSet['nbTimeout'] += 1
             imageProcessQueue.put(imgSet)
@@ -239,7 +242,6 @@ def imageDownloader( userName, imageProcessQueue ):
 def extractUserAnswer( loginSession, userName, silent = False):
     global SILENT_OUTPUT
     SILENT_OUTPUT = silent
-    s             = loginSession
     userURL       = 'http://www.zhihu.com/people/' + userName
     baseURL       = userURL + '/answers/'
     loginURL      = 'http://www.zhihu.com/login'
@@ -249,7 +251,7 @@ def extractUserAnswer( loginSession, userName, silent = False):
     imageProcessQueue  = Queue.Queue()
     answerContentList  = []
     
-    answerPageScannerThread = threading.Thread(target = answerPageScanner,args=(s,baseURL,answerPageQueue))
+    answerPageScannerThread = threading.Thread(target = answerPageScanner,args=(loginSession,baseURL,answerPageQueue))
     answerPageScannerThread.daemon = True
     answerPageScannerThread.start()
     
@@ -259,11 +261,11 @@ def extractUserAnswer( loginSession, userName, silent = False):
     
     global NB_WORKER_THREAD
     for i in range(NB_WORKER_THREAD) :
-        answerContentExtractorThread = threading.Thread(target = answerContentExtractor,args=(s,questionLinkQueue,answerContentList,imageProcessQueue))
+        answerContentExtractorThread = threading.Thread(target = answerContentExtractor,args=(loginSession,questionLinkQueue,answerContentList,imageProcessQueue))
         answerContentExtractorThread.daemon = True
         answerContentExtractorThread.start()    
             
-        imageDownloaderThread = threading.Thread(target = imageDownloader,args=(userName,imageProcessQueue))
+        imageDownloaderThread = threading.Thread(target = imageDownloader,args=(loginSession,userName,imageProcessQueue))
         imageDownloaderThread.daemon = True
         imageDownloaderThread.start()
     
@@ -273,7 +275,7 @@ def extractUserAnswer( loginSession, userName, silent = False):
     questionLinkQueue.join()
     imageProcessQueue.join()
     
-    userInfo = getUserInfo(s, userURL)
+    userInfo = getUserInfo( loginSession, userURL)
     result = { 
                'userInfo'   : userInfo,
                'userAnswer' : answerContentList
@@ -282,11 +284,11 @@ def extractUserAnswer( loginSession, userName, silent = False):
 
 def main():
     if len( sys.argv ) != 4:
-        print "Usage : UserName, Password, UserToBeExtracted" 
+        print "Usage : Email, Password, UserToBeExtracted" 
         print str(len( sys.argv)) + " argument(s) received." 
         sys.exit(1)
         
-    s           = requests.session()
+    loginSession= requests.session()
     login_data  = { 'email' : sys.argv[1] , 'password' : sys.argv[2] }
     userName    = sys.argv[3]
     
@@ -296,15 +298,15 @@ def main():
     
     if not SILENT_OUTPUT:
         print 'Login to Zhihu.com...' 
-    s.post(loginURL,login_data)
-    r = s.get(baseURL)
-
-    print r
-    if r.status_code != 200:
+    loginSession.post(loginURL,login_data)
+    response = loginSession.get(userURL+'/about')
+        
+    print response
+    if response.status_code != 200:
         print 'Error accessing page...'
         sys.exit(1)
     
-    result = extractUserAnswer(s,userName)
+    result = extractUserAnswer(loginSession,userName)
     
     if not SILENT_OUTPUT:
         print "Writing to XML..." 
