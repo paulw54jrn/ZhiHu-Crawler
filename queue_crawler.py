@@ -1,7 +1,7 @@
 #! /usr/bin/python
 # -*- coding: utf-8 -*-
 from lxml import etree
-import requests, re, sys, Queue, threading, time
+import requests, re, sys, Queue, threading, time, 
 
 NB_WORKER_THREAD = 5
 BASE_DOMAIN      = 'http://www.zhihu.com'
@@ -57,14 +57,28 @@ def answerContentExtractor( loginSession, questionLinkQueue , answerContentList)
             questionInfo   = re.findall('<div class="zm-editable-content">(.*)</div>',raw_data)[0]
         except IndexError:
             questionInfo   = ""
+        try:
+            answerContent  = re.findall('<div class=" zm-editable-content clearfix">(.*)',raw_data)[0]
+        except IndexError:
+            questionLinkQueue.task_done()
+            return
+        try:
+            voteCount  = re.findall('<a name="expand" class="zm-item-vote-count" href="javascript:;" data-votecount=".*?">(.*)</a>',raw_data)[0]
+        except IndexError:
+            voteCount = ""
+        try:
+            lastEdit = re.findall('<span class="time">(.*)</span>',raw_data)[0]
+        except IndexError:
+            lastEdit = ""
             
-        answerContent  = re.findall('<div class=" zm-editable-content clearfix">(.*)',raw_data)[0]
         result = {
                   'questionID'    : questionID,
                   'answerID'      : answerID,
                   'title'         : title,
                   'questionInfo'  : questionInfo,
-                  'answerContent' : answerContent
+                  'answerContent' : answerContent,
+                  'voteCount'     : voteCount
+                  'lastEdit'      : lastEdit
                 }
         if not SILENT_OUTPUT:
             print 'Answer ('+str(answerID)+') Extracted...' 
@@ -107,33 +121,23 @@ def getUserInfo( loginSession, userPageURL) :
     return result
         
 def writeUserInfo( node, userInfo ) :
-    name               = etree.SubElement(node,'name')
-    bio                = etree.SubElement(node,'bio')
-    bussinessItem      = etree.SubElement(node,'bussinessItem')
-    description        = etree.SubElement(node,'description')
-    name.text          = etree.CDATA(userInfo['name'])
-    bio.text           = etree.CDATA(userInfo['bio'])
-    bussinessItem.text = etree.CDATA(userInfo['bussinessItem'])
-    description.text   = etree.CDATA(userInfo['description'])
+    for key in userInfo:
+        textNode      = etree.SubElement(node,key)
+        textNode.text = userInfo[key]
 
 
 def writeUserAnswer( node, userAnswer) :
-    questionId         = etree.SubElement(node,'questionID')
-    questionId.text    = etree.CDATA(userAnswer['questionID'])
-    answerId           = etree.SubElement(node,'answerID')
-    answerId.text      = etree.CDATA(userAnswer['answerID'])
-    title              = etree.SubElement(node,'title')
-    title.text         = etree.CDATA(userAnswer['title'])
-    questionInfo       = etree.SubElement(node,'questionInfo')
-    questionInfo.text  = etree.CDATA(userAnswer['questionInfo'])
-    answerContent      = etree.SubElement(node,'answerContent')
-    answerContent.text = etree.CDATA(userAnswer['answerContent'])
-    
+    for key in userAnswer:
+        textNode      = etree.SubElement(node,key)
+        textNode.text = userAnswer[key]
+        
+        
 def writeUserAnswerList( node, userAnswerList ) :
     for i in range(len(userAnswerList)):
         new_answer_node = etree.SubElement(node,"answer")
         writeUserAnswer( new_answer_node,  userAnswerList[i] )
-    
+
+
 def writeToXML( XMLPath, userInfo, completeAnswerList):
     root            = etree.Element('document')
     node_userInfo   = etree.SubElement(root,"userInfo")
@@ -245,18 +249,18 @@ def main():
         print "Total Answer(s) written : " + str(len(answerContentList)) 
 
 if __name__ == '__main__':
-#    main()
-    if len( sys.argv ) != 5:
-        print "Usage : UserName, Password, UserToBeExtracted, XMLFileName" 
-        print str(len( sys.argv)) + " argument(s) received." 
-        sys.exit(1)
-        
-    s           = requests.session()
-    login_data  = { 'email' : sys.argv[1] , 'password' : sys.argv[2] }
-    s.post('http://www.zhihu.com/login',login_data)
-    userName    = sys.argv[3]
-    XMLFileName = sys.argv[4]
-    result = extractUserAnswer(s,userName)
-    writeToXML(XMLFileName,result['userInfo'],result['userAnswer'])
+    main()
+#    if len( sys.argv ) != 5:
+#        print "Usage : UserName, Password, UserToBeExtracted, XMLFileName" 
+#        print str(len( sys.argv)) + " argument(s) received." 
+#        sys.exit(1)
+#        
+#    s           = requests.session()
+#    login_data  = { 'email' : sys.argv[1] , 'password' : sys.argv[2] }
+#    s.post('http://www.zhihu.com/login',login_data)
+#    userName    = sys.argv[3]
+#    XMLFileName = sys.argv[4]
+#    result = extractUserAnswer(s,userName)
+#    writeToXML(XMLFileName,result['userInfo'],result['userAnswer'])
 
 
