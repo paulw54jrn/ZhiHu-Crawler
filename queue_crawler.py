@@ -1,11 +1,12 @@
 #! /usr/bin/python
 # -*- coding: utf-8 -*-
 from lxml import etree
-import requests, re, sys, Queue, threading, time, 
+import requests, re, sys, Queue, threading, time, os
 
 NB_WORKER_THREAD = 5
 BASE_DOMAIN      = 'http://www.zhihu.com'
 SILENT_OUTPUT    = False
+BASE_FOLDER      = 'Answer/'
 
 def answerPageScanner( loginSession, userAnswerURL, answerPageQueue):
     response     = loginSession.get(userAnswerURL)
@@ -77,7 +78,7 @@ def answerContentExtractor( loginSession, questionLinkQueue , answerContentList)
                   'title'         : title,
                   'questionInfo'  : questionInfo,
                   'answerContent' : answerContent,
-                  'voteCount'     : voteCount
+                  'voteCount'     : voteCount,
                   'lastEdit'      : lastEdit
                 }
         if not SILENT_OUTPUT:
@@ -91,6 +92,8 @@ def getUserInfo( loginSession, userPageURL) :
     URL           = userPageURL + '/about'
     response      = loginSession.get(URL)
     raw_data      = response.text
+    
+    strID         = userPageURL[userPageURL.find('/people/')+8:]
     
     if not SILENT_OUTPUT : 
         print "Extracting User Info : " + URL
@@ -113,6 +116,7 @@ def getUserInfo( loginSession, userPageURL) :
         description   = ""
     
     result = {
+                'strID': strID,
                 'name' : name,
                 'bio'  : bio,
                 'bussinessItem' : bussinessItem,
@@ -148,8 +152,18 @@ def writeToXML( XMLPath, userInfo, completeAnswerList):
     
     with open(XMLPath,'w') as f:
         f.write( etree.tostring(root, encoding = 'UTF-8' ,pretty_print = True ))
-    
-    
+
+def writeFile( result ):
+    userInfo   = result['userInfo']
+    userAnswer = result['userAnswer']
+    userName   = userInfo['strID']
+
+    global BASE_FOLDER    
+    if not os.path.exists(BASE_FOLDER+userName) :
+        os.makedirs(BASE_FOLDER+userName)
+ 
+    writeToXML(BASE_FOLDER+userName+"/"+userName+".xml", userInfo, userAnswer)
+
 def extractUserAnswer( loginSession, userName, silent = False):
     global SILENT_OUTPUT
     SILENT_OUTPUT = silent
@@ -158,9 +172,6 @@ def extractUserAnswer( loginSession, userName, silent = False):
     baseURL       = userURL + '/answers/'
     loginURL      = 'http://www.zhihu.com/login'
 
-    if not SILENT_OUTPUT:
-        print 'Login to Zhihu.com...' 
-    
     answerPageQueue    = Queue.Queue()
     questionLinkQueue  = Queue.Queue()
     answerContentList  = []
@@ -190,15 +201,14 @@ def extractUserAnswer( loginSession, userName, silent = False):
     return result
 
 def main():
-    if len( sys.argv ) != 5:
-        print "Usage : UserName, Password, UserToBeExtracted, XMLFileName" 
+    if len( sys.argv ) != 4:
+        print "Usage : UserName, Password, UserToBeExtracted" 
         print str(len( sys.argv)) + " argument(s) received." 
         sys.exit(1)
         
     s           = requests.session()
     login_data  = { 'email' : sys.argv[1] , 'password' : sys.argv[2] }
     userName    = sys.argv[3]
-    XMLFileName = sys.argv[4]
     
     userURL     = 'http://www.zhihu.com/people/' + userName
     baseURL     = userURL + '/answers/'
@@ -208,59 +218,25 @@ def main():
         print 'Login to Zhihu.com...' 
     s.post(loginURL,login_data)
     r = s.get(baseURL)
-    
-    if not SILENT_OUTPUT:
-        print r 
-    if r.status_code != 200 : 
-        print "Page Access Error. Url = " + baseURL
+
+    print r
+    if r.status_code != 200:
+        print 'Error accessing page...'
         sys.exit(1)
     
-    answerPageQueue    = Queue.Queue()
-    questionLinkQueue  = Queue.Queue()
-    answerContentList  = []
-    
-    answerPageScannerThread = threading.Thread(target = answerPageScanner,args=(s,baseURL,answerPageQueue))
-    answerPageScannerThread.daemon = True
-    answerPageScannerThread.start()
-    
-    questionLinkExtractorThread = threading.Thread(target = questionLinkExtractor,args=(answerPageQueue,questionLinkQueue))
-    questionLinkExtractorThread.daemon = True
-    questionLinkExtractorThread.start()
-    
-    global NB_WORKER_THREAD
-    for i in range(NB_WORKER_THREAD) :
-        answerContentExtractorThread = threading.Thread(target = answerContentExtractor,args=(s,questionLinkQueue,answerContentList))
-        answerContentExtractorThread.daemon = True
-        answerContentExtractorThread.start()
-    
-    time.sleep(5)
-    answerPageQueue.join()
-    questionLinkQueue.join()
+    result = extractUserAnswer(s,userName)
     
     if not SILENT_OUTPUT:
         print "Writing to XML..." 
-        
-    writeToXML(XMLFileName,getUserInfo(s,userURL),answerContentList)
+    writeFile(result)
     
     if not SILENT_OUTPUT:
         print "Done..." 
     
     if not SILENT_OUTPUT:
-        print "Total Answer(s) written : " + str(len(answerContentList)) 
+        print "Total Answer(s) written : " + str(len(result['userAnswer'])) 
 
 if __name__ == '__main__':
     main()
-#    if len( sys.argv ) != 5:
-#        print "Usage : UserName, Password, UserToBeExtracted, XMLFileName" 
-#        print str(len( sys.argv)) + " argument(s) received." 
-#        sys.exit(1)
-#        
-#    s           = requests.session()
-#    login_data  = { 'email' : sys.argv[1] , 'password' : sys.argv[2] }
-#    s.post('http://www.zhihu.com/login',login_data)
-#    userName    = sys.argv[3]
-#    XMLFileName = sys.argv[4]
-#    result = extractUserAnswer(s,userName)
-#    writeToXML(XMLFileName,result['userInfo'],result['userAnswer'])
 
 
