@@ -136,28 +136,53 @@ def getUserInfo( loginSession, userPageURL) :
         print "Extracting User Info : " + URL
     
     try:
-        name          = re.findall('<a class=\"name\" href=\".*?\">(.*)</a>',raw_data)[0]
+        name = re.findall('<a class=\"name\" href=\".*?\">(.*)</a>',raw_data)[0]
     except IndexError :
-        name          = ""
+        name = ""
     try: 
-        bio           = re.findall('<span class=\"bio\" title=\".*?\">(.*)</span>',raw_data)[0]
+        bio  = re.findall('<span class=\"bio\" title=\".*?\">(.*)</span>',raw_data)[0]
     except IndexError :
-        bio           = ""
+        bio  = ""
     try: 
-        bussinessItem = re.findall('<span class=\"business item\" title=\".*?\">(.*)</span>',raw_data)[0]
+        bussinessItem \
+        = re.findall('<span class=\"business item\" title=\".*?\">(.*)</span>',raw_data)[0]
     except IndexError :
         bussinessItem = ""
     try:
-        description   = re.findall('<span class="content">(.*?)</span>',raw_data.replace('\n',''))[0]
+        description   \
+        = re.findall('<span class="content">(.*?)</span>',raw_data.replace('\n',''))[0]
     except IndexError :
         description   = ""
+    
+    try:
+        imageURL = re.findall('<img alt=\".*\"src=\"(.*)\"class=\"zm-profile-header-img zg-avatar-big zm-avatar-editor-preview\"/>',raw_data.replace('\n',''))[0]
+    except IndexError :
+        imageURL = ""
+    print imageURL
+    try:
+        if len(imageURL) > 0 :
+            fileName = imageURL.split('/')
+            fileName = fileName[len(fileName)-1]
+            filePath = BASE_FOLDER+strID+"/image/"
+            if not os.path.exists( filePath ) :
+                os.makedirs( filePath )
+            
+            r = loginSession.get( imageURL , stream=True, timeout=CONN_TIMEOUT)
+            if r.status_code == 200 :
+                with open( filePath + fileName,'wb+')as f:
+                    for chunk in r.iter_content(): 
+                        f.write(chunk)
+        print "User Avatar Image Download Completed..."
+    except requests.exceptions.Timeout:
+        print "User Avatar Image Download Timeout..."
     
     result = {
                 'strID': strID,
                 'name' : name,
                 'bio'  : bio,
                 'bussinessItem' : bussinessItem,
-                'description'   : description
+                'description'   : description,
+                'userAvatarImg' : fileName
                 }
     return result
         
@@ -246,14 +271,10 @@ def imageDownloader( loginSession,userName, imageProcessQueue ):
             
             if not SILENT_OUTPUT:
                 print "Image "+ fileName + " Download Completed..."
-        except requests.exceptions.Timeout:
+        except requests.exceptions.Timeout, request.exceptions.ConnectionError:
             print "Request for "+fileName+" timed out... Retrying..."
             imgSet['nbTimeout'] += 1
             imageProcessQueue.put(imgSet)
-#        else:
-#            print >> sys.stderr , "Exception..." 
-#            imageProcessQueue.task_done()
-#            return
             
         imageProcessQueue.task_done()
 
