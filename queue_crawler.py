@@ -7,13 +7,13 @@ import requests, re, sys, Queue, threading, time, os, random
 
 NB_WORKER_THREAD = 5         #number of worker threads. 
 BASE_DOMAIN      = 'http://www.zhihu.com' 
-SILENT_OUTPUT    = False     #Do not output verbose information 
+SILENT_OUTPUT    = False     #Do not output diagnostic information 
 BASE_FOLDER      = 'Answer/' #folder to contain all the files
 MAX_CONN_RETRY   = 3         #max number of re-connection before abort
 CONN_TIMEOUT     = 10        #max timeout before abort
 
 #Scan the web page, extract the URL of next page and put it
-#inside the answerPageQueue
+#to the answerPageQueue
 def answerPageScanner( loginSession, userAnswerURL, answerPageQueue):
     response     = loginSession.get(userAnswerURL)
     raw_data     = response.text
