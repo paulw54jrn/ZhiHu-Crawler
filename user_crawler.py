@@ -1,17 +1,26 @@
 #! /usr/bin/python
 # -*- coding: utf-8 -*-
 
-import requests, re, sys, json, Queue
+import requests, re, sys, json, Queue ,os
+import queue_crawler
 
-SILENT_OUTPUT = False
-NEXT_PAGE_URL = 'http://www.zhihu.com/node/ProfileFolloweesListV2'
+SILENT_OUTPUT  = False
+NEXT_PAGE_URL  = 'http://www.zhihu.com/node/ProfileFolloweesListV2'
+MAX_NB_PROCESS = 3
 
+def followeeExtractor( loginSession, userProfilePageURLQueue) :
+    while True:
+        try:
+            userProfilePageURL = userProfilePageURLQueue.get()
+            userName = userProfilePageURL.split('/')[len(userProfilePageURL.split('/'))-1]
+            print "Extracting User " + userName 
+            result = queue_crawler.extractUserAnswer( loginSession, userName )
+            queue_crawler.writeFile(result)
+            print userName + " Extraction Completed..."
+        except Queue.Empty : 
+            return 
 
-def followeeScanner( loginSession, userProfilePageURL) :
-    pass
-    
-
-def extractor( loginSession, userProfilePageURL):
+def mainExtractor( loginSession, userProfilePageURL):
     response = loginSession.get( userProfilePageURL )
     raw_data = response.text
     
@@ -65,6 +74,7 @@ def extractor( loginSession, userProfilePageURL):
     response   = loginSession.post( NEXT_PAGE_URL , data = payload , headers = requestHeader ) 
     response   =  json.loads(response.text)
     
+    
     while len(response['msg']) > 0 :
         pageCount += 1
         offset    += 20
@@ -79,7 +89,14 @@ def extractor( loginSession, userProfilePageURL):
         
     print str(len(pageFolloweeList)) + " links extracted..."
     
+    userProfilePageURLQueue = Queue.Queue()
+    [userProfilePageURLQueue.put(link) for link in pageFolloweeList]
+    followeeExtractor(loginSession, userProfilePageURLQueue)
+        
+    print "Main Process Completed. Terminated."
+
 if __name__ == "__main__":
+    
     if len( sys.argv ) != 3:
         print "Usage : Email, Password" 
         print str(len( sys.argv)) + " argument(s) received." 
@@ -101,4 +118,4 @@ if __name__ == "__main__":
         print 'Error accessing page...'
         sys.exit(1)
 
-    extractor(loginSession, userProfilePageURL)
+    mainExtractor(loginSession, userProfilePageURL)

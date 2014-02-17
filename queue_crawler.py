@@ -42,7 +42,7 @@ def questionLinkExtractor( answerPageQueue, questionLinkQueue):
         questionLinks = re.findall("<h2><a class=\"question_link\" href=\"(.*)\">.*</a></h2>",raw_data)
 
         for i in range(len( questionLinks)):
-            questionLinkQueue.put( questionLinks[i] )
+            questionLinkQueue.put( {'URL':questionLinks[i],'timeoutNb':0} )
         
         if not SILENT_OUTPUT:
             print str(len(questionLinks)) + " link(s) Extracted..." 
@@ -77,17 +77,33 @@ def imgLinkExtractorModifier( answerResult, imageProcessQueue):
 def answerContentExtractor( loginSession, questionLinkQueue , answerContentList, imageProcessQueue) :
     while True:
         global BASE_DOMAIN
-        answerContentPageURL = questionLinkQueue.get()
+         
+        answerContentHash    = questionLinkQueue.get()
+        answerContentPageURL = answerContentHash['URL']
+        timeoutNb            = answerContentHash['timeoutNb']
+        
+        if int(timeoutNb) > MAX_CONN_RETRY : 
+            print >> sys.stderr , "Max retry reached. Abort : " + answerContentPageURL
+            questionLinkQueue.task_done()
+            continue 
         
         if not SILENT_OUTPUT:
             print "Sending Request To Retrieve " + answerContentPageURL 
-            
-        response       = loginSession.get( BASE_DOMAIN + answerContentPageURL )
-        raw_data       = response.text
-        questionID     = answerContentPageURL[answerContentPageURL.find('/question/')+10:answerContentPageURL.find('/answer/')]
-        answerID       = answerContentPageURL[answerContentPageURL.find('/answer/')+8:]
-        title          = re.findall('<title>(.*)</title>',raw_data)[0]
         
+        try :     
+            response       = loginSession.get(BASE_DOMAIN + answerContentPageURL , timeout = CONN_TIMEOUT )
+            raw_data       = response.text
+            questionID     = answerContentPageURL[answerContentPageURL.find('/question/')+10:answerContentPageURL.find('/answer/')]
+            answerID       = answerContentPageURL[answerContentPageURL.find('/answer/')+8:]
+            title          = re.findall('<title>(.*)</title>',raw_data)[0]
+        
+        except requests.exceptions.Timeout:
+            timeoutNb += 1
+            putback = {'URL':answerContentPageURL,'timeoutNb':timeoutNb}
+            questionLinkQueue.put( putback )
+            questionLinkQueue.task_done()
+            continue
+            
         try:
             questionInfo   = re.findall('<div class="zm-editable-content">(.*)</div>',raw_data)[0]
         except IndexError:
@@ -96,7 +112,8 @@ def answerContentExtractor( loginSession, questionLinkQueue , answerContentList,
             answerContent  = re.findall('<div class=" zm-editable-content clearfix">(.*)',raw_data)[0]
         except IndexError:
             questionLinkQueue.task_done()
-            return
+            continue
+            
         try:
             voteCount  = re.findall('<a name="expand" class="zm-item-vote-count" href="javascript:;" data-votecount=".*?">(.*)</a>',raw_data)[0]
         except IndexError:
@@ -239,7 +256,8 @@ def imageDownloader( loginSession,userName, imageProcessQueue ):
         imageLink = imgSet['imageLink']
         nbTimeout = imgSet['nbTimeout']
         
-        print "Starting to download file "+ imageLink
+        if not SILENT_OUTPUT :
+            print "Starting to download file "+ imageLink
         
         global MAX_CONN_RETRY
         if nbTimeout > MAX_CONN_RETRY : 
