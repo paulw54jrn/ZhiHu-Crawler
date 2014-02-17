@@ -5,7 +5,7 @@ from bs4  import BeautifulSoup
 
 import requests, re, sys, Queue, threading, time, os, random
 
-NB_WORKER_THREAD = 5         #number of worker threads. 
+NB_WORKER_THREAD = 3         #number of worker threads. 
 BASE_DOMAIN      = 'http://www.zhihu.com' 
 SILENT_OUTPUT    = False     #Do not output diagnostic information 
 BASE_FOLDER      = 'Answer/' #folder to contain all the files
@@ -15,7 +15,7 @@ CONN_TIMEOUT     = 10        #max timeout before abort
 #Scan the web page, extract the URL of next page and put it
 #to the answerPageQueue
 def answerPageScanner( loginSession, userAnswerURL, answerPageQueue):
-    response     = loginSession.get(userAnswerURL)
+    response     = loginSession.get(userAnswerURL, timeout = CONN_TIMEOUT)
     raw_data     = response.text
     raw_next_url = re.findall(u'<span class="zg-gray-normal">下一页</span>',raw_data)
     page_count   = 2
@@ -28,7 +28,11 @@ def answerPageScanner( loginSession, userAnswerURL, answerPageQueue):
         URL = userAnswerURL + "?page=" + str(page_count)
         response = loginSession.get(URL)
         raw_data = response.text
-        raw_next_url = re.findall(u'<span class="zg-gray-normal">下一页</span>',raw_data)
+        raw_next_url  = re.findall(u'<span class="zg-gray-normal">下一页</span>',raw_data)
+        questionLinks = re.findall("<h2><a class=\"question_link\" href=\"(.*)\">.*</a></h2>",raw_data)
+        if len(questionLinks) == 0:
+            break
+            
         if not SILENT_OUTPUT:
             print "Answer Page "+str(page_count)+" Scanned..." 
         page_count += 1
@@ -47,29 +51,33 @@ def questionLinkExtractor( answerPageQueue, questionLinkQueue):
         if not SILENT_OUTPUT:
             print str(len(questionLinks)) + " link(s) Extracted..." 
         answerPageQueue.task_done()
-
+        
 #Scan through the extracted html document , extract all the img 
 #tags, then change the image's src to the local file
 def imgLinkExtractorModifier( answerResult, imageProcessQueue):
-    answerID= answerResult['answerID']
-    html    = BeautifulSoup(answerResult['answerContent'])
-    img     = html.find_all(re.compile('img'))
-    imgList = []
+    try:
+        answerID= answerResult['answerID']
+        html    = BeautifulSoup(answerResult['answerContent'])
+        img     = html.find_all(re.compile('img'))
+        imgList = []
+        
+        for lnk in img:
+            if lnk.get('data-actualsrc') != None:
+                imageProcessQueue.put( {'answerID':answerID,'imageLink':lnk['data-actualsrc'],'nbTimeout':0})
+                linkPath = str(lnk['data-actualsrc']).split('/')
+                fileName = linkPath[len(linkPath)-1]
+                imgList.append(fileName)
+                lnk['src'] = answerID + "/" + fileName
+            else:
+                lnk.decompose()
+                
+        answerResult['answerContent'] = str(html).decode('utf-8')
+        answerResult['img'] = imgList
+        return answerResult
     
-    for lnk in img:
-        if lnk.get('data-actualsrc') != None:
-            imageProcessQueue.put( {'answerID':answerID,'imageLink':lnk['data-actualsrc'],'nbTimeout':0})
-            linkPath = str(lnk['data-actualsrc']).split('/')
-            fileName = linkPath[len(linkPath)-1]
-            imgList.append(fileName)
-            lnk['src'] = answerID + "/" + fileName
-        else:
-            lnk.decompose()
-            
-    answerResult['answerContent'] = str(html).decode('utf-8')
-    answerResult['img'] = imgList
-    return answerResult
-
+    except :
+        return
+    
 #Scan the answer page, extract the title, id, description of the question, alone
 #with the answer content, put them into a dictionary, then push the dictionary
 #into the answerContentList. All the image links that were extracted from the 
@@ -96,8 +104,7 @@ def answerContentExtractor( loginSession, questionLinkQueue , answerContentList,
             questionID     = answerContentPageURL[answerContentPageURL.find('/question/')+10:answerContentPageURL.find('/answer/')]
             answerID       = answerContentPageURL[answerContentPageURL.find('/answer/')+8:]
             title          = re.findall('<title>(.*)</title>',raw_data)[0]
-        
-        except requests.exceptions.Timeout:
+        except requests.exceptions.Timeout , IndexError:
             timeoutNb += 1
             putback = {'URL':answerContentPageURL,'timeoutNb':timeoutNb}
             questionLinkQueue.put( putback )
@@ -108,6 +115,7 @@ def answerContentExtractor( loginSession, questionLinkQueue , answerContentList,
             questionInfo   = re.findall('<div class="zm-editable-content">(.*)</div>',raw_data)[0]
         except IndexError:
             questionInfo   = ""
+            
         try:
             answerContent  = re.findall('<div class=" zm-editable-content clearfix">(.*)',raw_data)[0]
         except IndexError:

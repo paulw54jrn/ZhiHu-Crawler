@@ -6,7 +6,6 @@ import queue_crawler
 
 SILENT_OUTPUT  = False
 NEXT_PAGE_URL  = 'http://www.zhihu.com/node/ProfileFolloweesListV2'
-MAX_NB_PROCESS = 3
 
 def followeeExtractor( loginSession, userProfilePageURLQueue) :
     while True:
@@ -41,7 +40,7 @@ def mainExtractor( loginSession, userProfilePageURL):
     try:
         linkList = re.findall('<h2 class=\"zm-list-content-title\"><a data-tip=\".*\" href=\"(.*)\" class=\"zg-link\" title=\".*\">.*</a></h2>',raw_data)
         pageFolloweeList.extend(linkList)
-        print "Extracting followee list page " + str(pageCount) + " with " + str(len(linkList)) + " entries..."
+        print "Extracting followee list page " + str(pageCount) + "," + str(len(linkList)) + " entries found..."
     except IndexError:
         linkList = []
         print >> sys.stderr, "Followee links for Page 1 Extract Failed..."
@@ -78,7 +77,7 @@ def mainExtractor( loginSession, userProfilePageURL):
     while len(response['msg']) > 0 :
         pageCount += 1
         offset    += 20
-        print "Extracting followee list page " + str(pageCount) + " with " + str(len(response['msg'])) + " entries..."
+        print "Extracting followee list page " + str(pageCount) + "," + str(len(response['msg'])) + " entries found..."
         for count in range(len( response['msg'])) :
             link = re.findall('<h2 class=\"zm-list-content-title\"><a data-tip=\".*\" href=\"(.*)\" class=\"zg-link\" title=\".*\">.*</a></h2>',response['msg'][count])[0]
             pageFolloweeList.append(link)
