@@ -43,14 +43,20 @@ def answerPageScanner( loginSession, userAnswerURL, answerPageQueue):
 def questionLinkExtractor( answerPageQueue, questionLinkQueue):
     while True:
         raw_data = answerPageQueue.get()
-        questionLinks = re.findall("<h2><a class=\"question_link\" href=\"(.*)\">.*</a></h2>",raw_data)
-
-        for i in range(len( questionLinks)):
-            questionLinkQueue.put( {'URL':questionLinks[i],'timeoutNb':0} )
         
-        if not SILENT_OUTPUT:
-            print str(len(questionLinks)) + " link(s) Extracted..." 
-        answerPageQueue.task_done()
+        try:
+            questionLinks = re.findall("<h2><a class=\"question_link\" href=\"(.*)\">.*</a></h2>",raw_data)
+
+            for i in range(len( questionLinks)):
+                questionLinkQueue.put( {'URL':questionLinks[i],'timeoutNb':0} )
+            
+            if not SILENT_OUTPUT:
+                print str(len(questionLinks)) + " link(s) Extracted..." 
+            answerPageQueue.task_done()
+            
+        except Exception , e:
+            print e
+            answerPageQueue.task_done()
         
 #Scan through the extracted html document , extract all the img 
 #tags, then change the image's src to the local file
@@ -86,68 +92,72 @@ def answerContentExtractor( loginSession, questionLinkQueue , answerContentList,
     while True:
         global BASE_DOMAIN
          
-        answerContentHash    = questionLinkQueue.get()
-        answerContentPageURL = answerContentHash['URL']
-        timeoutNb            = answerContentHash['timeoutNb']
-        
-        if int(timeoutNb) > MAX_CONN_RETRY : 
-            print >> sys.stderr , "Max retry reached. Abort : " + answerContentPageURL
-            questionLinkQueue.task_done()
-            continue 
-        
-        if not SILENT_OUTPUT:
-            print "Sending Request To Retrieve " + answerContentPageURL 
-        
-        try :     
-            response       = loginSession.get(BASE_DOMAIN + answerContentPageURL , timeout = CONN_TIMEOUT )
-            raw_data       = response.text
-            questionID     = answerContentPageURL[answerContentPageURL.find('/question/')+10:answerContentPageURL.find('/answer/')]
-            answerID       = answerContentPageURL[answerContentPageURL.find('/answer/')+8:]
-            title          = re.findall('<title>(.*)</title>',raw_data)[0]
-        except requests.exceptions.Timeout , IndexError:
-            timeoutNb += 1
-            putback = {'URL':answerContentPageURL,'timeoutNb':timeoutNb}
-            questionLinkQueue.put( putback )
-            questionLinkQueue.task_done()
-            continue
+        try:
+            answerContentHash    = questionLinkQueue.get()
+            answerContentPageURL = answerContentHash['URL']
+            timeoutNb            = answerContentHash['timeoutNb']
             
-        try:
-            questionInfo   = re.findall('<div class="zm-editable-content">(.*)</div>',raw_data)[0]
-        except IndexError:
-            questionInfo   = ""
+            if int(timeoutNb) > MAX_CONN_RETRY : 
+                print >> sys.stderr , "Max retry reached. Abort : " + answerContentPageURL
+                questionLinkQueue.task_done()
+                continue 
             
-        try:
-            answerContent  = re.findall('<div class=" zm-editable-content clearfix">(.*)',raw_data)[0]
-        except IndexError:
-            questionLinkQueue.task_done()
-            continue
+            if not SILENT_OUTPUT:
+                print "Sending Request To Retrieve " + answerContentPageURL 
             
-        try:
-            voteCount  = re.findall('<a name="expand" class="zm-item-vote-count" href="javascript:;" data-votecount=".*?">(.*)</a>',raw_data)[0]
-        except IndexError:
-            voteCount = ""
-        try:
-            lastEdit = re.findall('<span class="time">(.*)</span>',raw_data)[0]
-        except IndexError:
-            lastEdit = ""
-        
-        result = {
-                  'questionID'    : questionID,
-                  'answerID'      : answerID,
-                  'title'         : title,
-                  'questionInfo'  : questionInfo,
-                  'answerContent' : answerContent,
-                  'voteCount'     : voteCount,
-                  'lastEdit'      : lastEdit
-                }
+            try :     
+                response       = loginSession.get(BASE_DOMAIN + answerContentPageURL , timeout = CONN_TIMEOUT )
+                raw_data       = response.text
+                questionID     = answerContentPageURL[answerContentPageURL.find('/question/')+10:answerContentPageURL.find('/answer/')]
+                answerID       = answerContentPageURL[answerContentPageURL.find('/answer/')+8:]
+                title          = re.findall('<title>(.*)</title>',raw_data)[0]
+            except requests.exceptions.Timeout , IndexError:
+                timeoutNb += 1
+                putback = {'URL':answerContentPageURL,'timeoutNb':timeoutNb}
+                questionLinkQueue.put( putback )
+                questionLinkQueue.task_done()
+                continue
                 
-        result = imgLinkExtractorModifier(result, imageProcessQueue)
+            try:
+                questionInfo   = re.findall('<div class="zm-editable-content">(.*)</div>',raw_data)[0]
+            except IndexError:
+                questionInfo   = ""
+                
+            try:
+                answerContent  = re.findall('<div class=" zm-editable-content clearfix">(.*)',raw_data)[0]
+            except IndexError:
+                questionLinkQueue.task_done()
+                continue
+                
+            try:
+                voteCount  = re.findall('<a name="expand" class="zm-item-vote-count" href="javascript:;" data-votecount=".*?">(.*)</a>',raw_data)[0]
+            except IndexError:
+                voteCount = ""
+            try:
+                lastEdit = re.findall('<span class="time">(.*)</span>',raw_data)[0]
+            except IndexError:
+                lastEdit = ""
+            
+            result = {
+                      'questionID'    : questionID,
+                      'answerID'      : answerID,
+                      'title'         : title,
+                      'questionInfo'  : questionInfo,
+                      'answerContent' : answerContent,
+                      'voteCount'     : voteCount,
+                      'lastEdit'      : lastEdit
+                    }
+                    
+            result = imgLinkExtractorModifier(result, imageProcessQueue)
+            
+            if not SILENT_OUTPUT:
+                print 'Answer ('+str(answerID)+') Extracted...' 
+            answerContentList.append(result)
+            questionLinkQueue.task_done()
         
-        if not SILENT_OUTPUT:
-            print 'Answer ('+str(answerID)+') Extracted...' 
-        answerContentList.append(result)
-        questionLinkQueue.task_done()
-
+        except Exception ,e:
+            print e
+            questionLinkQueue.task_done()
 
 #Access the user's profile page and extract user information.
 def getUserInfo( loginSession, userPageURL) :
@@ -260,49 +270,53 @@ def writeFile( result ):
 def imageDownloader( loginSession,userName, imageProcessQueue ):
     while True:
         imgSet    = imageProcessQueue.get()
-        answerID  = imgSet['answerID']
-        imageLink = imgSet['imageLink']
-        nbTimeout = imgSet['nbTimeout']
-        
-        if not SILENT_OUTPUT :
-            print "Starting to download file "+ imageLink
-        
-        global MAX_CONN_RETRY
-        if nbTimeout > MAX_CONN_RETRY : 
-            print >> sys.stderr ,"Max retry reached... aborting..." 
-            imageProcessQueue.task_done()
-            return
-        
-        imgPath   = BASE_FOLDER+userName+"/"+answerID+"/image/"
-        fileName = str(imageLink).split('/')
-        fileName  = fileName[len(fileName)-1]
         try:
-            if not os.path.exists( imgPath ):
-                waitTime = random.randint(0,10)
-                time.sleep(waitTime)
+            answerID  = imgSet['answerID']
+            imageLink = imgSet['imageLink']
+            nbTimeout = imgSet['nbTimeout']
+            
+            if not SILENT_OUTPUT :
+                print "Starting to download file "+ imageLink
+            
+            global MAX_CONN_RETRY
+            if nbTimeout > MAX_CONN_RETRY : 
+                print >> sys.stderr ,"Max retry reached... aborting..." 
+                imageProcessQueue.task_done()
+                return
+            
+            imgPath   = BASE_FOLDER+userName+"/"+answerID+"/image/"
+            fileName = str(imageLink).split('/')
+            fileName  = fileName[len(fileName)-1]
+            try:
                 if not os.path.exists( imgPath ):
-                    os.makedirs( imgPath )
-        except :
-            pass
-            
-        global CONN_TIMEOUT
-        try:
-            r = loginSession.get( imageLink , stream=True, timeout=CONN_TIMEOUT)
-            if r.status_code == 200 :
-                with open( imgPath + fileName,'wb+')as f:
-                    for chunk in r.iter_content(): 
-                        f.write(chunk)
-            else:
-                print >> sys.stderr , "Image " + fileName + " download Error..." 
-            
-            if not SILENT_OUTPUT:
-                print "Image "+ fileName + " Download Completed..."
-        except requests.exceptions.Timeout, request.exceptions.ConnectionError:
-            print "Request for "+fileName+" timed out... Retrying..."
-            imgSet['nbTimeout'] += 1
-            imageProcessQueue.put(imgSet)
-            
-        imageProcessQueue.task_done()
+                    waitTime = random.randint(0,10)
+                    time.sleep(waitTime)
+                    if not os.path.exists( imgPath ):
+                        os.makedirs( imgPath )
+            except :
+                pass
+                
+            global CONN_TIMEOUT
+            try:
+                r = loginSession.get( imageLink , stream=True, timeout=CONN_TIMEOUT)
+                if r.status_code == 200 :
+                    with open( imgPath + fileName,'wb+')as f:
+                        for chunk in r.iter_content(): 
+                            f.write(chunk)
+                else:
+                    print >> sys.stderr , "Image " + fileName + " download Error..." 
+                
+                if not SILENT_OUTPUT:
+                    print "Image "+ fileName + " Download Completed..."
+            except requests.exceptions.Timeout, request.exceptions.ConnectionError:
+                print "Request for "+fileName+" timed out... Retrying..."
+                imgSet['nbTimeout'] += 1
+                imageProcessQueue.put(imgSet)
+                
+            imageProcessQueue.task_done()
+        except Exception ,e:
+            print e
+            imageProcessQueue.task_done()
 
 def extractUserAnswer( loginSession, userName, silent = False):
     global SILENT_OUTPUT
