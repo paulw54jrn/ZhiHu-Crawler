@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 from lxml import etree
 from bs4  import BeautifulSoup
-
 import requests, re, sys, Queue, threading, time, os, random
 
 NB_WORKER_THREAD = 3         #number of worker threads. 
@@ -43,46 +42,38 @@ def answerPageScanner( loginSession, userAnswerURL, answerPageQueue):
 def questionLinkExtractor( answerPageQueue, questionLinkQueue):
     while True:
         raw_data = answerPageQueue.get()
+        questionLinks = re.findall("<h2><a class=\"question_link\" href=\"(.*)\">.*</a></h2>",raw_data)
+        for i in range(len( questionLinks)):
+            questionLinkQueue.put( {'URL':questionLinks[i],'timeoutNb':0} )
+        if not SILENT_OUTPUT:
+            print str(len(questionLinks)) + " link(s) Extracted..." 
+        answerPageQueue.task_done()
         
-        try:
-            questionLinks = re.findall("<h2><a class=\"question_link\" href=\"(.*)\">.*</a></h2>",raw_data)
-
-            for i in range(len( questionLinks)):
-                questionLinkQueue.put( {'URL':questionLinks[i],'timeoutNb':0} )
-            
-            if not SILENT_OUTPUT:
-                print str(len(questionLinks)) + " link(s) Extracted..." 
-            answerPageQueue.task_done()
-            
-        except Exception , e:
-            print e
-            answerPageQueue.task_done()
         
 #Scan through the extracted html document , extract all the img 
 #tags, then change the image's src to the local file
 def imgLinkExtractorModifier( answerResult, imageProcessQueue):
-    try:
-        answerID= answerResult['answerID']
-        html    = BeautifulSoup(answerResult['answerContent'])
-        img     = html.find_all(re.compile('img'))
-        imgList = []
-        
-        for lnk in img:
-            if lnk.get('data-actualsrc') != None:
-                imageProcessQueue.put( {'answerID':answerID,'imageLink':lnk['data-actualsrc'],'nbTimeout':0})
-                linkPath = str(lnk['data-actualsrc']).split('/')
-                fileName = linkPath[len(linkPath)-1]
-                imgList.append(fileName)
-                lnk['src'] = answerID + "/" + fileName
-            else:
-                lnk.decompose()
-                
-        answerResult['answerContent'] = str(html).decode('utf-8')
-        answerResult['img'] = imgList
-        return answerResult
+    answerID= answerResult['answerID']
+   
+    html    = BeautifulSoup(answerResult['answerContent'].encode('utf-8'),"lxml")
+    img     = html.find_all(re.compile('img'))
+    imgList = []
     
-    except :
-        return
+    for lnk in img:
+        if lnk.get('data-actualsrc') is not None:
+            imageProcessQueue.put( {'answerID':answerID,'imageLink':lnk['data-actualsrc'],'nbTimeout':0})
+            linkPath = str(lnk['data-actualsrc']).split('/')
+            fileName = linkPath[len(linkPath)-1]
+            imgList.append(fileName)
+            lnk['src'] = answerID + "/" + fileName
+            print str(lnk['data-actualsrc'])
+        else:
+            lnk.decompose()
+            
+    answerResult['answerContent'] = str(html).decode('utf-8')
+    answerResult['img'] = imgList
+    return answerResult
+    
     
 #Scan the answer page, extract the title, id, description of the question, alone
 #with the answer content, put them into a dictionary, then push the dictionary
@@ -92,72 +83,68 @@ def answerContentExtractor( loginSession, questionLinkQueue , answerContentList,
     while True:
         global BASE_DOMAIN
          
-        try:
-            answerContentHash    = questionLinkQueue.get()
-            answerContentPageURL = answerContentHash['URL']
-            timeoutNb            = answerContentHash['timeoutNb']
-            
-            if int(timeoutNb) > MAX_CONN_RETRY : 
-                print >> sys.stderr , "Max retry reached. Abort : " + answerContentPageURL
-                questionLinkQueue.task_done()
-                continue 
-            
-            if not SILENT_OUTPUT:
-                print "Sending Request To Retrieve " + answerContentPageURL 
-            
-            try :     
-                response       = loginSession.get(BASE_DOMAIN + answerContentPageURL , timeout = CONN_TIMEOUT )
-                raw_data       = response.text
-                questionID     = answerContentPageURL[answerContentPageURL.find('/question/')+10:answerContentPageURL.find('/answer/')]
-                answerID       = answerContentPageURL[answerContentPageURL.find('/answer/')+8:]
-                title          = re.findall('<title>(.*)</title>',raw_data)[0]
-            except requests.exceptions.Timeout , IndexError:
-                timeoutNb += 1
-                putback = {'URL':answerContentPageURL,'timeoutNb':timeoutNb}
-                questionLinkQueue.put( putback )
-                questionLinkQueue.task_done()
-                continue
-                
-            try:
-                questionInfo   = re.findall('<div class="zm-editable-content">(.*)</div>',raw_data)[0]
-            except IndexError:
-                questionInfo   = ""
-                
-            try:
-                answerContent  = re.findall('<div class=" zm-editable-content clearfix">(.*)',raw_data)[0]
-            except IndexError:
-                questionLinkQueue.task_done()
-                continue
-                
-            try:
-                voteCount  = re.findall('<a name="expand" class="zm-item-vote-count" href="javascript:;" data-votecount=".*?">(.*)</a>',raw_data)[0]
-            except IndexError:
-                voteCount = ""
-            try:
-                lastEdit = re.findall('<span class="time">(.*)</span>',raw_data)[0]
-            except IndexError:
-                lastEdit = ""
-            
-            result = {
-                      'questionID'    : questionID,
-                      'answerID'      : answerID,
-                      'title'         : title,
-                      'questionInfo'  : questionInfo,
-                      'answerContent' : answerContent,
-                      'voteCount'     : voteCount,
-                      'lastEdit'      : lastEdit
-                    }
-                    
-            result = imgLinkExtractorModifier(result, imageProcessQueue)
-            
-            if not SILENT_OUTPUT:
-                print 'Answer ('+str(answerID)+') Extracted...' 
-            answerContentList.append(result)
-            questionLinkQueue.task_done()
+        answerContentHash    = questionLinkQueue.get()
+        answerContentPageURL = answerContentHash['URL']
+        timeoutNb            = answerContentHash['timeoutNb']
         
-        except Exception ,e:
-            print e
+        if int(timeoutNb) > MAX_CONN_RETRY : 
+            print >> sys.stderr , "Max retry reached. Abort : " + answerContentPageURL
             questionLinkQueue.task_done()
+            continue 
+        
+        if not SILENT_OUTPUT:
+            print "Sending Request To Retrieve " + answerContentPageURL 
+        
+        try :     
+            response       = loginSession.get(BASE_DOMAIN + answerContentPageURL , timeout = CONN_TIMEOUT )
+            raw_data       = response.text
+            questionID     = answerContentPageURL[answerContentPageURL.find('/question/')+10:answerContentPageURL.find('/answer/')]
+            answerID       = answerContentPageURL[answerContentPageURL.find('/answer/')+8:]
+            title          = re.findall('<title>(.*)</title>',raw_data)[0]
+        except requests.exceptions.Timeout , IndexError:
+            timeoutNb += 1
+            putback = {'URL':answerContentPageURL,'timeoutNb':timeoutNb}
+            questionLinkQueue.put( putback )
+            questionLinkQueue.task_done()
+            continue
+            
+        try:
+            questionInfo   = re.findall('<div class="zm-editable-content">(.*)</div>',raw_data)[0]
+        except IndexError:
+            questionInfo   = ""
+            
+        try:
+            answerContent  = re.findall('<div class=" zm-editable-content clearfix">(.*)',raw_data)[0]
+        except IndexError:
+            questionLinkQueue.task_done()
+            continue
+            
+        try:
+            voteCount  = re.findall('<a name="expand" class="zm-item-vote-count" href="javascript:;" data-votecount=".*?">(.*)</a>',raw_data)[0]
+        except IndexError:
+            voteCount = ""
+        try:
+            lastEdit = re.findall('<span class="time">(.*)</span>',raw_data)[0]
+        except IndexError:
+            lastEdit = ""
+        
+        result = {
+                  'questionID'    : questionID,
+                  'answerID'      : answerID,
+                  'title'         : title,
+                  'questionInfo'  : questionInfo,
+                  'answerContent' : answerContent,
+                  'voteCount'     : voteCount,
+                  'lastEdit'      : lastEdit
+                }
+                
+        result = imgLinkExtractorModifier(result, imageProcessQueue)
+        
+        if not SILENT_OUTPUT:
+            print 'Answer ('+str(answerID)+') Extracted...' 
+        answerContentList.append(result)
+        questionLinkQueue.task_done()
+    
 
 #Access the user's profile page and extract user information.
 def getUserInfo( loginSession, userPageURL) :
@@ -252,6 +239,7 @@ def writeToXML( XMLPath, userInfo, completeAnswerList):
     writeUserInfo      ( node_userInfo   , userInfo )
     writeUserAnswerList( node_userAnswer , completeAnswerList )
     
+        
     with open(XMLPath,'w') as f:
         f.write( etree.tostring(root, encoding = 'UTF-8' ,pretty_print = True ))
 
@@ -260,7 +248,7 @@ def writeFile( result ):
     userInfo   = result['userInfo']
     userAnswer = result['userAnswer']
     userName   = userInfo['strID']
-
+    
     global BASE_FOLDER    
     if not os.path.exists(BASE_FOLDER+userName) :
         os.makedirs(BASE_FOLDER+userName)
@@ -329,7 +317,7 @@ def extractUserAnswer( loginSession, userName, silent = False):
     questionLinkQueue  = Queue.Queue()
     imageProcessQueue  = Queue.Queue()
     answerContentList  = []
-    
+
     answerPageScannerThread = threading.Thread(target = answerPageScanner,args=(loginSession,baseURL,answerPageQueue))
     answerPageScannerThread.daemon = True
     answerPageScannerThread.start()
