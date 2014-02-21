@@ -101,7 +101,7 @@ def answerContentExtractor( loginSession, questionLinkQueue , answerContentList,
             questionID     = answerContentPageURL[answerContentPageURL.find('/question/')+10:answerContentPageURL.find('/answer/')]
             answerID       = answerContentPageURL[answerContentPageURL.find('/answer/')+8:]
             title          = re.findall('<title>(.*)</title>',raw_data)[0]
-        except requests.exceptions.Timeout , IndexError:
+        except (requests.exceptions.Timeout ,IndexError):
             timeoutNb += 1
             putback = {'URL':answerContentPageURL,'timeoutNb':timeoutNb}
             questionLinkQueue.put( putback )
@@ -296,7 +296,7 @@ def imageDownloader( loginSession,userName, imageProcessQueue ):
                 
                 if not SILENT_OUTPUT:
                     print "Image "+ fileName + " Download Completed..."
-            except requests.exceptions.Timeout, request.exceptions.ConnectionError:
+            except (requests.exceptions.Timeout, request.exceptions.ConnectionError):
                 print "Request for "+fileName+" timed out... Retrying..."
                 imgSet['nbTimeout'] += 1
                 imageProcessQueue.put(imgSet)
